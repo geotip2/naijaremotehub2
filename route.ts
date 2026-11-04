@@ -1,19 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireUser, authError } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { initializePaystack } from "@/lib/paystack";
 
-export async function POST() {
+export async function GET() {
   try {
-    const user = await requireUser();
-    if (!user.email) return NextResponse.json({ error: "Your account has no email address." }, { status: 400 });
-    const db = createAdminClient();
-    const { data: profile, error } = await db.from("users").select("is_paid,paid_until").eq("id",user.id).single();
-    if (error || !profile) return NextResponse.json({ error: "Member profile not found." }, { status: 404 });
-    if (profile.is_paid && profile.paid_until && new Date(profile.paid_until) > new Date()) {
-      return NextResponse.json({ error: "Your membership is already active." }, { status: 409 });
-    }
-    const payment = await initializePaystack(user.email,user.id);
-    return NextResponse.json({ authorization_url: payment.authorization_url });
-  } catch (e) { return authError(e); }
+    const user=await requireUser(); const db=createAdminClient();
+    const [{data:profile,error:pErr},{data:payments},{data:referrals},{data:team}] = await Promise.all([
+      db.from("users").select("id,email,balance,is_paid,paid_until,bank_name,bank_account,referred_by,created_at").eq("id",user.id).single(),
+      db.from("payments").select("id,type,amount,status,level,created_at,paystack_ref").eq("user_id",user.id).order("created_at",{ascending:false}).limit(50),
+      db.from("referrals").select("id,referrer_id,referee_id,level,amount,status,created_at").eq("referrer_id",user.id).order("created_at",{ascending:false}).limit(100),
+      db.rpc("get_team_counts",{p_user_id:user.id})
+    ]);
+    if(pErr||!profile) return NextResponse.json({error:"Member profile not found."},{status:404});
+    return NextResponse.json({profile,payments:payments||[],referrals:referrals||[],team:team||{level1:0,level2:0,level3:0},siteUrl:process.env.NEXT_PUBLIC_SITE_URL||new URL(process.env.NEXT_PUBLIC_SITE_URL||"http://localhost:3000").origin});
+  } catch(e){return authError(e);}
 }
