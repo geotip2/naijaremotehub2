@@ -1,28 +1,26 @@
 import { NextResponse } from "next/server";
-import { createHmac, timingSafeEqual } from "crypto";
+import { requireUser, authError } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { verifyPaystack } from "@/lib/paystack";
 
 export async function POST(request: Request) {
-  const raw = await request.text();
-  const signature = request.headers.get("x-paystack-signature") || "";
-  const secret = process.env.PAYSTACK_SECRET_KEY || "";
-  if (!secret || !signature) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const expected = createHmac("sha512", secret).update(raw).digest("hex");
-  const a = Buffer.from(signature); const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a,b)) return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-  const event = JSON.parse(raw);
-  if (event.event === "charge.success") {
-    const tx = event.data;
-    if (tx.status === "success" && Number(tx.amount) === 2_500_000 && tx.currency === "NGN" && tx.metadata?.user_id) {
-      const db = createAdminClient();
-      const { error } = await db.rpc("finalize_membership_payment", {
-        p_user_id: tx.metadata.user_id, p_reference: tx.reference, p_amount: 25000
-      });
-      if (error && !error.message.toLowerCase().includes("already processed")) {
-        console.error("Paystack webhook processing failed:", error.message);
-        return NextResponse.json({ error: "Could not process payment" }, { status: 500 });
-      }
+  try {
+    const user = await requireUser();
+    const body = await request.json().catch(()=>({}));
+    const reference = typeof body.reference === "string" ? body.reference : "";
+    if (!reference) return NextResponse.json({ error: "Payment reference is required." }, { status: 400 });
+    const payment = await verifyPaystack(reference);
+    if (payment.status !== "success" || Number(payment.amount) !== 2_500_000 || payment.currency !== "NGN" || payment.metadata?.user_id !== user.id) {
+      return NextResponse.json({ error: "Payment could not be verified for this account." }, { status: 400 });
     }
-  }
-  return NextResponse.json({ received: true });
+    const db = createAdminClient();
+    const { error } = await db.rpc("finalize_membership_payment", {
+      p_user_id: user.id, p_reference: reference, p_amount: 25000
+    });
+    if (error) {
+      if (error.message.toLowerCase().includes("already processed")) return NextResponse.json({ ok: true, message: "Payment was already processed." });
+      throw error;
+    }
+    return NextResponse.json({ ok: true });
+  } catch (e) { return authError(e); }
 }
