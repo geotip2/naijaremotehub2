@@ -1,10 +1,20 @@
-import PaymentVerifyClient from "./verify-client";
+"use client";
+import { useEffect,useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { naira,dateTime } from "@/lib/format";
+import Link from "next/link";
 
-export default async function PaymentVerifyPage({
-  searchParams
-}: {
-  searchParams: Promise<{ reference?: string; trxref?: string }>;
-}) {
-  const params = await searchParams;
-  return <PaymentVerifyClient reference={params.reference || params.trxref || ""} />;
+export default function AdminPage(){
+ const [data,setData]=useState<any>(null);const [error,setError]=useState("");const [busy,setBusy]=useState("");const [message,setMessage]=useState("");
+ async function load(){const r=await fetch("/api/admin",{cache:"no-store"});const d=await r.json();if(!r.ok)throw new Error(d.error);setData(d);}
+ useEffect(()=>{load().catch(e=>setError(e.message));},[]);
+ async function action(payload:any,key:string){setBusy(key);setError("");setMessage("");try{const r=await fetch("/api/admin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok)throw new Error(d.error);setMessage("Action completed.");await load();}catch(e){setError(e instanceof Error?e.message:"Action failed.");}finally{setBusy("");}}
+ async function logout(){await createClient().auth.signOut();window.location.href="/login";}
+ if(!data)return <main className="mx-auto max-w-6xl px-4 py-12"><div className="card"><h1 className="text-2xl font-black">Admin dashboard</h1><p className="mt-3 text-slate-600">{error||"Loading…"}</p><Link href="/login" className="btn-primary mt-5">Log in</Link></div></main>;
+ return <main className="mx-auto max-w-6xl px-4 py-9"><div className="flex flex-wrap justify-between gap-3"><div><p className="eyebrow">Administration</p><h1 className="mt-1 text-3xl font-black text-emerald-950">NaijaRemoteHub Admin</h1></div><button onClick={logout} className="btn-secondary">Log out</button></div>
+ {error&&<p className="mt-4 rounded-xl bg-red-50 p-3 text-red-700">{error}</p>}{message&&<p className="mt-4 rounded-xl bg-emerald-50 p-3 text-emerald-800">{message}</p>}
+ <section className="card mt-6"><h2 className="text-xl font-extrabold">All members ({data.users.length})</h2><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b text-slate-500"><th className="py-3">Email</th><th>Balance</th><th>Membership</th><th>Expires</th><th>Joined</th><th>Action</th></tr></thead><tbody>{data.users.map((u:any)=><tr key={u.id} className="border-b border-slate-100"><td className="py-3">{u.email}</td><td>{naira(u.balance)}</td><td>{u.is_paid?"Paid":"Unpaid"}</td><td>{dateTime(u.paid_until)}</td><td>{dateTime(u.created_at)}</td><td>{!u.is_paid||!u.paid_until||new Date(u.paid_until)<new Date()?<button disabled={!!busy} onClick={()=>action({action:"approve_membership",user_id:u.id},u.id)} className="rounded-lg bg-emerald-600 px-3 py-2 font-bold text-white disabled:opacity-50">{busy===u.id?"Working…":"Approve payment"}</button>:<span className="text-emerald-700">Active</span>}</td></tr>)}</tbody></table></div></section>
+ <section className="card mt-5"><h2 className="text-xl font-extrabold">Withdrawal requests</h2><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b text-slate-500"><th className="py-3">Member ID</th><th>Amount</th><th>Bank</th><th>Account</th><th>Status</th><th>Actions</th></tr></thead><tbody>{data.withdrawals.map((w:any)=><tr key={w.id} className="border-b border-slate-100"><td className="py-3">{w.user_id}</td><td>{naira(w.amount)}</td><td>{w.bank_name||"—"}</td><td>{w.bank_account||"—"}</td><td className="capitalize">{w.status}</td><td className="space-x-2">{w.status==="pending"&&<><button disabled={!!busy} onClick={()=>action({action:"withdrawal_status",payment_id:w.id,status:"paid"},w.id)} className="rounded-lg bg-emerald-600 px-3 py-2 font-bold text-white">Mark paid</button><button disabled={!!busy} onClick={()=>action({action:"withdrawal_status",payment_id:w.id,status:"rejected"},w.id)} className="rounded-lg bg-red-100 px-3 py-2 font-bold text-red-700">Reject</button></>}</td></tr>)}</tbody></table></div></section>
+ <section className="card mt-5"><h2 className="text-xl font-extrabold">Commission history</h2><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm"><thead><tr className="border-b text-slate-500"><th className="py-3">Recipient user ID</th><th>Level</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>{data.commissions.map((c:any)=><tr key={c.id} className="border-b border-slate-100"><td className="py-3">{c.user_id}</td><td>{c.level}</td><td>{naira(c.amount)}</td><td className="capitalize">{c.status}</td><td>{dateTime(c.created_at)}</td></tr>)}</tbody></table></div></section>
+ </main>;
 }
